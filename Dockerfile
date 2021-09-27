@@ -8,7 +8,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG VPNKIT_VERSION=0.5.0
 ARG DOCKER_BUILDTAGS="apparmor seccomp"
 
-ARG BASE_DEBIAN_DISTRO="buster"
+ARG BASE_DEBIAN_DISTRO="stretch"
 ARG GOLANG_IMAGE="golang:${GO_VERSION}-${BASE_DEBIAN_DISTRO}"
 
 FROM ${GOLANG_IMAGE} AS base
@@ -167,6 +167,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM dev-base AS containerd
 ARG DEBIAN_FRONTEND
+RUN echo 'deb http://deb.debian.org/debian buster-backports main' > /etc/apt/sources.list.d/backports.list
 RUN --mount=type=cache,sharing=locked,id=moby-containerd-aptlib,target=/var/lib/apt \
     --mount=type=cache,sharing=locked,id=moby-containerd-aptcache,target=/var/cache/apt \
         apt-get update && apt-get install -y --no-install-recommends \

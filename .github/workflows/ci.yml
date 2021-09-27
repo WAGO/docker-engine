@@ -17,8 +17,8 @@ env:
   DOCKER_EXPERIMENTAL: 1
   DOCKER_GRAPHDRIVER: overlay2
   BUILDKIT_PROGRESS: plain
-  BASE_DEBIAN_DISTRO: buster
-  GOLANG_VERSION: 1.16.7
+  BASE_DEBIAN_DISTRO: stretch
+  GO_VERSION: 1.16.7
   APT_MIRROR: cdn-fastly.deb.debian.org
   CHECK_CONFIG_COMMIT: 78405559cfe5987174aa2cb6463b9b2c1b917255
   TESTDEBUG: 0
@@ -48,7 +48,7 @@ jobs:
       id: setup-docker-make
       uses: WAGO/docker-actions/setup-docker-make@release/v1.0
       with:
-        golang-version: ${{ env.GOLANG_VERSION }}
+        golang-version: ${{ env.GO_VERSION }}
         base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
         host-arch: ${{ matrix.arch }}
         target-platform: ${{ matrix.platform }}
@@ -111,7 +111,7 @@ jobs:
       with:
         targets: |
           cross
-        golang-version: ${{ env.GOLANG_VERSION }}
+        golang-version: ${{ env.GO_VERSION }}
         base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
         host-arch: ${{ matrix.arch }}
         target-platform: ${{ matrix.platform }}
@@ -171,7 +171,7 @@ jobs:
       with:
         targets: |
           binary
-        golang-version: ${{ env.GOLANG_VERSION }}
+        golang-version: ${{ env.GO_VERSION }}
         base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
         host-arch: ${{ matrix.arch }}
         target-platform: ${{ matrix.platform }}
@@ -252,7 +252,7 @@ jobs:
       with:
         targets: |
           dynbinary
-        golang-version: ${{ env.GOLANG_VERSION }}
+        golang-version: ${{ env.GO_VERSION }}
         base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
         host-arch: ${{ matrix.arch }}
         target-platform: ${{ matrix.platform }}
@@ -337,7 +337,7 @@ jobs:
       with:
         targets: |
           test-unit
-        golang-version: ${{ env.GOLANG_VERSION }}
+        golang-version: ${{ env.GO_VERSION }}
         base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
         host-arch: ${{ matrix.arch }}
         target-platform: ${{ matrix.platform }}
