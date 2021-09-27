@@ -1,0 +1,378 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - 'release/**'
+  pull_request:
+    branches: 
+      - master
+      - 'release/**'
+
+env:
+  PLATFORM: Docker Engine - WAGO (Community)
+  DEFAULT_PRODUCT_LICENSE: Community Engine
+  DOCKER_GITCOMMIT: ${{ github.sha }}
+  DOCKER_EXPERIMENTAL: 1
+  DOCKER_GRAPHDRIVER: overlay2
+  BUILDKIT_PROGRESS: plain
+  BASE_DEBIAN_DISTRO: stretch
+  GO_VERSION: 1.12.17
+  APT_MIRROR: cdn-fastly.deb.debian.org
+  CHECK_CONFIG_COMMIT: 78405559cfe5987174aa2cb6463b9b2c1b917255
+  TESTDEBUG: 0
+  TIMEOUT: 120m
+  BUILD_OUTPUT: bundles
+  VERSION: ''
+
+jobs:
+  build-cache:
+  
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          platform: linux/amd64
+        - arch: arm32v7
+          platform: linux/arm/v7
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up node for Docker make
+      id: setup-docker-make
+      uses: WAGO/docker-actions/setup-docker-make@release/v1.0
+      with:
+        golang-version: ${{ env.GO_VERSION }}
+        base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
+        host-arch: ${{ matrix.arch }}
+        target-platform: ${{ matrix.platform }}
+        check-config-commit: ${{ env.CHECK_CONFIG_COMMIT }}
+        project-version: ${{ env.VERSION }}
+
+    - name: Build cache image layers
+      uses: docker/build-push-action@v2
+      with:
+        target: dev-base
+        context: .
+        push: false
+        tags: dockerd-dev:${{ github.sha }}
+        cache-from: type=local,src=${{ steps.setup-docker-make.outputs.buildx-cache }}
+        cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+        platforms: |
+          ${{ matrix.platform }}
+        build-args: |
+          APT_MIRROR
+          PLATFORM
+          DEFAULT_PRODUCT_LICENSE
+          DOCKER_GITCOMMIT
+          VERSION=${{ steps.setup-docker-make.outputs.version }}
+          GO_VERSION=${{ env.GO_VERSION }}
+        load: true
+
+    # Temp fix
+    # https://github.com/docker/build-push-action/issues/252
+    # https://github.com/moby/buildkit/issues/1896
+    - name: Move cache
+      env:
+        BUILDX_CACHE: ${{ steps.setup-docker-make.outputs.buildx-cache }}
+      run: |
+        rm -rf "${BUILDX_CACHE}"
+        mv /tmp/.buildx-cache-new "${BUILDX_CACHE}"
+    
+  build-cross-binary:
+  
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          platform: linux/amd64
+        - arch: amd64
+          platform: linux/arm/v7
+      
+    runs-on: ubuntu-latest
+    if: false == true
+    needs:
+      - build-cache
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Make cross
+      id: docker-make
+      uses: WAGO/docker-actions/docker-make@release/v1.0
+      with:
+        targets: |
+          cross
+        golang-version: ${{ env.GO_VERSION }}
+        base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
+        host-arch: ${{ matrix.arch }}
+        target-platform: ${{ matrix.platform }}
+        check-config-commit: ${{ env.CHECK_CONFIG_COMMIT }}
+        project-version: ${{ env.VERSION }}
+        build-output: ${{ env.BUILD_OUTPUT }}
+        buildx-build-args: |
+          --load
+        make-args: |
+          DOCKER_IMAGE=dockerd-dev:${{ github.sha }}
+
+    - name: Print version information
+      run: |
+        "${BUILD_OUTPUT}/cross/${{ matrix.platform }}/dockerd" --version
+
+    - name: Create bundle
+      id: create-bundle
+      env:
+        BUNDLE_PLATFORM: ${{ steps.docker-make.outputs.target-platform-id }}
+      run: |
+        bundle_archive_name="dockerd-cross-${BUNDLE_PLATFORM}.tar"
+        bundle_archive="${BUILD_OUTPUT}/${bundle_archive_name}"
+        tar -C "${BUILD_OUTPUT}/cross/${{ matrix.platform }}" -cvf "${bundle_archive}" .
+        echo "::set-output name=archive::${bundle_archive}"
+        echo "::set-output name=archive-name::${bundle_archive_name}"
+
+    - name: Upload bundle
+      uses: actions/upload-artifact@v2
+      with:
+        name: ${{ steps.create-bundle.outputs.archive-name }}
+        path: ${{ steps.create-bundle.outputs.archive }}
+        retention-days: 7
+
+  build-static-binary:
+  
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          platform: linux/amd64
+        - arch: arm32v7
+          platform: linux/arm/v7
+      
+    runs-on: ubuntu-latest
+    needs:
+      - build-cache
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Make binary
+      id: docker-make
+      uses: WAGO/docker-actions/docker-make@release/v1.0
+      with:
+        targets: |
+          binary
+        golang-version: ${{ env.GO_VERSION }}
+        base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
+        host-arch: ${{ matrix.arch }}
+        target-platform: ${{ matrix.platform }}
+        check-config-commit: ${{ env.CHECK_CONFIG_COMMIT }}
+        project-version: ${{ env.VERSION }}
+        build-output: ${{ env.BUILD_OUTPUT }}
+        buildx-build-args: |
+          --load
+        make-args: |
+          DOCKER_IMAGE=dockerd-dev:${{ github.sha }}
+
+    - name: Print version information
+      run: |
+        "${BUILD_OUTPUT}/binary-daemon/runc" --version
+        "${BUILD_OUTPUT}/binary-daemon/containerd" --version
+        "${BUILD_OUTPUT}/binary-daemon/dockerd" --version
+
+    - name: Create bundle
+      id: create-bundle
+      env:
+        BUNDLE_PLATFORM: ${{ steps.docker-make.outputs.target-platform-id }}
+      run: |
+        bundle_archive_name="dockerd-static-${BUNDLE_PLATFORM}.tar"
+        bundle_archive="${BUILD_OUTPUT}/${bundle_archive_name}"
+        tar -C "${BUILD_OUTPUT}/binary-daemon" -cvf "${bundle_archive}" .
+        echo "::set-output name=archive::${bundle_archive}"
+        echo "::set-output name=archive-name::${bundle_archive_name}"
+
+    - name: Upload bundle
+      uses: actions/upload-artifact@v2
+      with:
+        name: ${{ steps.create-bundle.outputs.archive-name }}
+        path: ${{ steps.create-bundle.outputs.archive }}
+        retention-days: 7
+
+  build-dynamic-binary:
+  
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          platform: linux/amd64
+        - arch: arm32v7
+          platform: linux/arm/v7
+      
+    runs-on: ubuntu-latest
+    if: false == true
+    needs:
+      - build-cache
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Make dynamic binary
+      id: docker-make
+      uses: WAGO/docker-actions/docker-make@release/v1.0
+      with:
+        targets: |
+          dynbinary
+        golang-version: ${{ env.GO_VERSION }}
+        base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
+        host-arch: ${{ matrix.arch }}
+        target-platform: ${{ matrix.platform }}
+        check-config-commit: ${{ env.CHECK_CONFIG_COMMIT }}
+        project-version: ${{ env.VERSION }}
+        build-output: ${{ env.BUILD_OUTPUT }}
+        buildx-build-args: |
+          --load
+        make-args: |
+          DOCKER_IMAGE=dockerd-dev:${{ github.sha }}
+
+    - name: Create bundle
+      id: create-bundle
+      env:
+        BUNDLE_PLATFORM: ${{ steps.docker-make.outputs.target-platform-id }}
+      run: |
+        bundle_archive_name="dockerd-dynamic-${BUNDLE_PLATFORM}.tar"
+        bundle_archive="${BUILD_OUTPUT}/${bundle_archive_name}"
+        tar -C "${BUILD_OUTPUT}/dynbinary-daemon" -cvf "${bundle_archive}" .
+        echo "::set-output name=archive::${bundle_archive}"
+        echo "::set-output name=archive-name::${bundle_archive_name}"
+
+    - name: Upload bundle
+      uses: actions/upload-artifact@v2
+      with:
+        name: ${{ steps.create-bundle.outputs.archive-name }}
+        path: ${{ steps.create-bundle.outputs.archive }}
+        retention-days: 7
+
+  unit-test:
+  
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          platform: linux/amd64
+        - arch: arm32v7
+          platform: linux/arm/v7
+      
+    runs-on: ubuntu-latest
+    needs:
+      - build-static-binary
+    
+    env:
+      TEST_SKIP_INTEGRATION_CLI: 1
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up kernel modules
+      run: sudo modprobe ip6table_filter
+
+    - name: Set artifact information
+      id: set-artifact-info
+      uses: WAGO/docker-actions/artifact-info@release/v1.0
+      with:
+        version: ${{ env.VERSION }}
+        platform: ${{ matrix.platform }}
+
+    - name: Set bundle meta information
+      env:
+        BUNDLE_PLATFORM: ${{ steps.set-artifact-info.outputs.platform-id }}
+      run: |
+        echo "BUNDLE_PLATFORM=${BUNDLE_PLATFORM}" >> "${GITHUB_ENV}"
+        echo "BUNDLE_ARCHIVE_NAME=dockerd-static-${BUNDLE_PLATFORM}.tar" >> "${GITHUB_ENV}"
+
+    - name: Download bundle
+      uses: actions/download-artifact@v2
+      with:
+        name: ${{ env.BUNDLE_ARCHIVE_NAME }}
+        path: ${{ env.BUILD_OUTPUT }}
+
+    - name: Extract bundle
+      run: |
+        mkdir -p "${BUILD_OUTPUT}/binary-daemon"
+        tar -C "${BUILD_OUTPUT}/binary-daemon" -xvf "${BUILD_OUTPUT}/${BUNDLE_ARCHIVE_NAME}"
+
+    - name: Print version information
+      run: |
+        "${BUILD_OUTPUT}/binary-daemon/runc" --version
+        "${BUILD_OUTPUT}/binary-daemon/containerd" --version
+        "${BUILD_OUTPUT}/binary-daemon/dockerd" version
+
+    - name: Make test-unit
+      id: docker-make
+      uses: WAGO/docker-actions/docker-make@release/v1.0
+      with:
+        targets: |
+          test-unit
+        golang-version: ${{ env.GO_VERSION }}
+        base-debian-distro: ${{ env.BASE_DEBIAN_DISTRO }}
+        host-arch: ${{ matrix.arch }}
+        target-platform: ${{ matrix.platform }}
+        check-config-commit: ${{ env.CHECK_CONFIG_COMMIT }}
+        buildx-driver-opts: |
+          network=host
+        buildx-build-args: |
+          --load
+        make-args: |
+          DOCKER_IMAGE=dockerd-dev:${{ github.sha }}
+          KEEPBUNDLE=1
+        project-version: ${{ env.VERSION }}
+        build-output: ${{ env.BUILD_OUTPUT }}
+
+    - name: Copy test results
+      id: copy-test-results
+      if: always()
+      run: |
+        report_output="${BUILD_OUTPUT}/junit-reports/${BUNDLE_PLATFORM}"
+        mkdir -p "$report_output"
+        cp "${BUILD_OUTPUT}"/junit-report*.xml "$report_output"
+        echo "::set-output name=report-output::${report_output}"
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v2
+      if: always()
+      with:
+        name: dockerd-test-results
+        path: ${{ steps.copy-test-results.outputs.report-output }}
+        retention-days: 7
+
+  publish-test-results:
+    runs-on: ubuntu-latest
+    needs: 
+      - unit-test
+    # unit-test job might be skipped, we don't need to run this job then
+    if: success() || failure()
+
+    steps:
+    - name: Download test results
+      uses: actions/download-artifact@v2
+      with:
+        name: dockerd-test-results
+        path: bundles/junit-reports
+
+    - name: Publish test results
+      uses: EnricoMi/publish-unit-test-result-action@v1
+      with:
+        deduplicate_classes_by_file_name: true
+        files: bundles/junit-reports/**/junit-report*.xml
+    
