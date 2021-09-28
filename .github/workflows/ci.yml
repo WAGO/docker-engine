@@ -248,8 +248,9 @@ jobs:
         include:
         - arch: amd64
           platform: linux/amd64
-        - arch: arm32v7
-          platform: linux/arm/v7
+# FIXME: Temporary disabled, while running under QEMU - a baremetal runner is needed to avoid false-positives
+#        - arch: arm32v7
+#          platform: linux/arm/v7
       
     runs-on: ubuntu-latest
     needs:
