@@ -123,10 +123,13 @@ jobs:
       id: create-bundle
       env:
         BUNDLE_PLATFORM: ${{ steps.docker-make.outputs.target-platform-id }}
+        TARGET_PLATFORM: ${{ matrix.platform }}
       run: |
         bundle_archive_name="dockerd-cross-${BUNDLE_PLATFORM}.tar"
         bundle_archive="${BUILD_OUTPUT}/${bundle_archive_name}"
-        tar -C "${BUILD_OUTPUT}/cross/${{ matrix.platform }}" -cvf "${bundle_archive}" .
+        build_output="${BUILD_OUTPUT}/cross/${TARGET_PLATFORM}"
+        tar -C "${build_output}" -cvf "${bundle_archive}" .
+        echo "::set-output name=input-path::${build_output}"
         echo "::set-output name=archive::${bundle_archive}"
         echo "::set-output name=archive-name::${bundle_archive_name}"
 
@@ -136,6 +139,12 @@ jobs:
         name: ${{ steps.create-bundle.outputs.archive-name }}
         path: ${{ steps.create-bundle.outputs.archive }}
         retention-days: 7
+
+    - name: Print artifact version informations
+      env:
+        BUNDLE_INPUT_PATH: ${{ steps.create-bundle.outputs.input-path }}
+      run: |
+        "${BUNDLE_INPUT_PATH}/dockerd" --version
 
   build-static-binary:
   
@@ -177,7 +186,9 @@ jobs:
       run: |
         bundle_archive_name="dockerd-static-${BUNDLE_PLATFORM}.tar"
         bundle_archive="${BUILD_OUTPUT}/${bundle_archive_name}"
-        tar -C "${BUILD_OUTPUT}/binary-daemon" -cvf "${bundle_archive}" .
+        build_output="${BUILD_OUTPUT}/binary-daemon"
+        tar -C "${build_output}" -cvf "${bundle_archive}" .
+        echo "::set-output name=input-path::${build_output}"
         echo "::set-output name=archive::${bundle_archive}"
         echo "::set-output name=archive-name::${bundle_archive_name}"
 
@@ -187,6 +198,14 @@ jobs:
         name: ${{ steps.create-bundle.outputs.archive-name }}
         path: ${{ steps.create-bundle.outputs.archive }}
         retention-days: 7
+
+    - name: Print artifact version informations
+      env:
+        BUNDLE_INPUT_PATH: ${{ steps.create-bundle.outputs.input-path }}
+      run: |
+        "${BUNDLE_INPUT_PATH}/runc" --version
+        "${BUNDLE_INPUT_PATH}/containerd" --version
+        "${BUNDLE_INPUT_PATH}/dockerd" --version
 
   build-dynamic-binary:
   
@@ -229,7 +248,9 @@ jobs:
       run: |
         bundle_archive_name="dockerd-dynamic-${BUNDLE_PLATFORM}.tar"
         bundle_archive="${BUILD_OUTPUT}/${bundle_archive_name}"
-        tar -C "${BUILD_OUTPUT}/dynbinary-daemon" -cvf "${bundle_archive}" .
+        build_output="${BUILD_OUTPUT}/dynbinary-daemon"
+        tar -C "${build_output}" -cvf "${bundle_archive}" .
+        echo "::set-output name=input-path::${build_output}"
         echo "::set-output name=archive::${bundle_archive}"
         echo "::set-output name=archive-name::${bundle_archive_name}"
 
@@ -291,12 +312,6 @@ jobs:
         mkdir -p "${BUILD_OUTPUT}/binary-daemon"
         tar -C "${BUILD_OUTPUT}/binary-daemon" -xvf "${BUILD_OUTPUT}/${BUNDLE_ARCHIVE_NAME}"
 
-    - name: Print version information
-      run: |
-        "${BUILD_OUTPUT}/binary-daemon/runc" --version
-        "${BUILD_OUTPUT}/binary-daemon/containerd" --version
-        "${BUILD_OUTPUT}/binary-daemon/dockerd" version
-
     - name: Make test-unit
       id: docker-make
       uses: WAGO/docker-actions/docker-make@release/v1.0
@@ -325,14 +340,14 @@ jobs:
         report_output="${BUILD_OUTPUT}/junit-reports/${BUNDLE_PLATFORM}"
         mkdir -p "$report_output"
         cp "${BUILD_OUTPUT}"/junit-report*.xml "$report_output"
-        echo "::set-output name=report-output::${report_output}"
+        echo "::set-output name=input-path::${report_output}"
 
     - name: Upload test results
       uses: actions/upload-artifact@v2
       if: always()
       with:
         name: dockerd-test-results
-        path: ${{ steps.copy-test-results.outputs.report-output }}
+        path: ${{ steps.copy-test-results.outputs.input-path }}
         retention-days: 7
 
   publish-test-results:
