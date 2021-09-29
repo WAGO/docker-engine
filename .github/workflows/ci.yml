@@ -179,14 +179,22 @@ jobs:
         project-version: ${{ env.VERSION }}
         build-output: ${{ env.BUILD_OUTPUT }}
 
+    - name: Download docker cli
+      uses: WAGO/docker-actions/download-release-asset@feat/oelh/download-artifact
+      with:
+        repository: WAGO/docker-cli
+        token: ${{ secrets.GITHUB_TOKEN }}
+        download-url-filter: ${{ steps.docker-make.outputs.target-platform-id }}
+
     - name: Create bundle
       id: create-bundle
       env:
         BUNDLE_PLATFORM: ${{ steps.docker-make.outputs.target-platform-id }}
       run: |
-        bundle_archive_name="dockerd-static-${BUNDLE_PLATFORM}.tar"
+        bundle_archive_name="docker-static-${BUNDLE_PLATFORM}.tar"
         bundle_archive="${BUILD_OUTPUT}/${bundle_archive_name}"
         build_output="${BUILD_OUTPUT}/binary-daemon"
+        tar -C "${build_output}" -xzvf "docker-cli-"*".tar.gz"
         tar -C "${build_output}" -cvf "${bundle_archive}" .
         echo "::set-output name=input-path::${build_output}"
         echo "::set-output name=archive::${bundle_archive}"
@@ -299,7 +307,7 @@ jobs:
         BUNDLE_PLATFORM: ${{ steps.set-artifact-info.outputs.platform-id }}
       run: |
         echo "BUNDLE_PLATFORM=${BUNDLE_PLATFORM}" >> "${GITHUB_ENV}"
-        echo "BUNDLE_ARCHIVE_NAME=dockerd-static-${BUNDLE_PLATFORM}.tar" >> "${GITHUB_ENV}"
+        echo "BUNDLE_ARCHIVE_NAME=docker-static-${BUNDLE_PLATFORM}.tar" >> "${GITHUB_ENV}"
 
     - name: Download bundle
       uses: actions/download-artifact@v2
