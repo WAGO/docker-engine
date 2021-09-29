@@ -180,7 +180,7 @@ jobs:
         build-output: ${{ env.BUILD_OUTPUT }}
 
     - name: Download docker cli
-      uses: WAGO/docker-actions/download-release-asset@feat/oelh/download-artifact
+      uses: WAGO/docker-actions/download-release-asset@release/v1.0
       with:
         repository: WAGO/docker-cli
         token: ${{ secrets.GITHUB_TOKEN }}
