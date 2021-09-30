@@ -180,11 +180,22 @@ jobs:
         build-output: ${{ env.BUILD_OUTPUT }}
 
     - name: Download docker cli
+      id: download-docker-cli
       uses: WAGO/docker-actions/download-release-asset@release/v1.0
       with:
         repository: WAGO/docker-cli
         token: ${{ secrets.GITHUB_TOKEN }}
-        download-url-filter: ${{ steps.docker-make.outputs.target-platform-id }}
+        url-filterpattern: docker-cli-.*static.*-${{ steps.docker-make.outputs.target-platform-id }}[.]tar[.]gz
+        working-directory: ${{ env.BUILD_OUTPUT }} 
+
+    - name: Extract docker cli
+      id: extract-docker-cli
+      env:
+        DOWNLOAD_PATH: ${{ steps.download-docker-cli.outputs.root-path }}
+      run: |
+        build_output="${BUILD_OUTPUT}/binary-daemon"
+        tar -C "${build_output}" -xzvf "${DOWNLOAD_PATH}/docker-cli-"*"static"*".tar.gz"
+        echo "::set-output name=path::${build_output}"
 
     - name: Create bundle
       id: create-bundle
@@ -193,8 +204,7 @@ jobs:
       run: |
         bundle_archive_name="docker-static-${BUNDLE_PLATFORM}.tar"
         bundle_archive="${BUILD_OUTPUT}/${bundle_archive_name}"
-        build_output="${BUILD_OUTPUT}/binary-daemon"
-        tar -C "${build_output}" -xzvf "docker-cli-"*".tar.gz"
+        build_output="${{ steps.extract-docker-cli.outputs.path }}"
         tar -C "${build_output}" -cvf "${bundle_archive}" .
         echo "::set-output name=input-path::${build_output}"
         echo "::set-output name=archive::${bundle_archive}"
@@ -214,6 +224,7 @@ jobs:
         "${BUNDLE_INPUT_PATH}/runc" --version
         "${BUNDLE_INPUT_PATH}/containerd" --version
         "${BUNDLE_INPUT_PATH}/dockerd" --version
+        "${BUNDLE_INPUT_PATH}/docker" version
 
   build-dynamic-binary:
   

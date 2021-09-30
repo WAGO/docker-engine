@@ -19,9 +19,7 @@ env:
   TESTDEBUG: 0
   TIMEOUT: 120m
   BUILD_OUTPUT: bundles
-  VERSION: '20.10-dev'
-  DOCKER_CLI_REPOSITORY: WAGO/docker-cli
-  DOCKER_CLI_TAG: latest
+  VERSION: 20.10-dev
 
 jobs:
   check:
@@ -80,7 +78,6 @@ jobs:
     runs-on: ubuntu-18.04
     needs:
       - check
-      - fetch-docker-cli-release
 
     env:
       VERSION: ${{ needs.check.outputs.stringver }}
@@ -106,16 +103,33 @@ jobs:
           --build-arg SOURCE_DATE_EPOCH
           --build-arg BUILDTIME
 
+    - name: Download docker cli
+      id: download-docker-cli
+      uses: WAGO/docker-actions/download-release-asset@release/v1.0
+      with:
+        repository: WAGO/docker-cli
+        token: ${{ secrets.GITHUB_TOKEN }}
+        url-filterpattern: docker-cli-.*static.*-${{ steps.docker-make.outputs.target-platform-id }}[.]tar[.]gz
+        working-directory: ${{ env.BUILD_OUTPUT }} 
+
+    - name: Extract docker cli
+      id: extract-docker-cli
+      env:
+        DOWNLOAD_PATH: ${{ steps.download-docker-cli.outputs.root-path }}
+      run: |
+        build_output="${BUILD_OUTPUT}/binary-daemon"
+        tar -C "${build_output}" -xzvf "${DOWNLOAD_PATH}/docker-cli-"*"static"*".tar.gz"
+        echo "::set-output name=path::${build_output}"
+
     - name: Create bundle
       id: create-bundle
       env:
-        BUNDLE_PLATFORM: ${{ steps.setup-docker-make.outputs.target-platform-id }}
-        VERSION: ${{ steps.setup-docker-make.outputs.version }}
+        BUNDLE_PLATFORM: ${{ steps.docker-make.outputs.target-platform-id }}
       run: |
         bundle_archive_name="docker-${VERSION//\./_}_static-${BUNDLE_PLATFORM}.tar"
         bundle_archive_base="${BUILD_OUTPUT}/${bundle_archive_name}"
         bundle_archive="${bundle_archive_base}.gz"
-        build_output="${BUILD_OUTPUT}/binary-daemon"
+        build_output="${{ steps.extract-docker-cli.outputs.path }}"
         tar -C "${build_output}" -czvf "${bundle_archive}" .
         (cd "$(dirname "${bundle_archive}")"; sha256sum "$(basename "${bundle_archive}")") > "${bundle_archive}".sha256sum
         echo "::set-output name=archive-base::${bundle_archive_base}"
@@ -135,6 +149,7 @@ jobs:
         "${BUNDLE_INPUT_PATH}/runc" --version
         "${BUNDLE_INPUT_PATH}/containerd" --version
         "${BUNDLE_INPUT_PATH}/dockerd" --version
+        "${BUNDLE_INPUT_PATH}/docker" version
 
   release:
     runs-on: ubuntu-18.04
