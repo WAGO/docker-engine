@@ -1,3 +1,4 @@
+//go:build linux || freebsd
 // +build linux freebsd
 
 package daemon // import "github.com/docker/docker/daemon"
@@ -193,8 +194,8 @@ func getBlkioWeightDevices(config containertypes.Resources) ([]specs.LinuxWeight
 		weight := weightDevice.Weight
 		d := specs.LinuxWeightDevice{Weight: &weight}
 		// The type is 32bit on mips.
-		d.Major = int64(unix.Major(uint64(stat.Rdev))) // nolint: unconvert
-		d.Minor = int64(unix.Minor(uint64(stat.Rdev))) // nolint: unconvert
+		d.Major = int64(unix.Major(uint64(stat.Rdev))) //nolint: unconvert
+		d.Minor = int64(unix.Minor(uint64(stat.Rdev))) //nolint: unconvert
 		blkioWeightDevices = append(blkioWeightDevices, d)
 	}
 
@@ -265,8 +266,8 @@ func getBlkioThrottleDevices(devs []*blkiodev.ThrottleDevice) ([]specs.LinuxThro
 		}
 		d := specs.LinuxThrottleDevice{Rate: d.Rate}
 		// the type is 32bit on mips
-		d.Major = int64(unix.Major(uint64(stat.Rdev))) // nolint: unconvert
-		d.Minor = int64(unix.Minor(uint64(stat.Rdev))) // nolint: unconvert
+		d.Major = int64(unix.Major(uint64(stat.Rdev))) //nolint: unconvert
+		d.Minor = int64(unix.Minor(uint64(stat.Rdev))) //nolint: unconvert
 		throttleDevices = append(throttleDevices, d)
 	}
 
@@ -477,7 +478,7 @@ func verifyPlatformContainerResources(resources *containertypes.Resources, sysIn
 		resources.KernelMemory = 0
 	}
 	if resources.KernelMemory > 0 && resources.KernelMemory < linuxMinMemory {
-		return warnings, fmt.Errorf("Minimum kernel memory limit allowed is 4MB")
+		return warnings, fmt.Errorf("Minimum kernel memory limit allowed is 6MB")
 	}
 	if resources.KernelMemory > 0 && !kernel.CheckKernelVersion(4, 0, 0) {
 		warnings = append(warnings, "You specified a kernel memory limit on a kernel older than 4.0. Kernel memory limits are experimental on older kernels, it won't work as expected and can cause your system to be unstable.")
@@ -1216,21 +1217,21 @@ func setupDaemonRoot(config *config.Config, rootDir string, remappedRoot idtools
 		}
 	}
 
+	id := idtools.Identity{UID: idtools.CurrentIdentity().UID, GID: remappedRoot.GID}
+	// First make sure the current root dir has the correct perms.
+	if err := idtools.MkdirAllAndChown(config.Root, 0710, id); err != nil {
+		return errors.Wrapf(err, "could not create or set daemon root permissions: %s", config.Root)
+	}
+
 	// if user namespaces are enabled we will create a subtree underneath the specified root
 	// with any/all specified remapped root uid/gid options on the daemon creating
 	// a new subdirectory with ownership set to the remapped uid/gid (so as to allow
 	// `chdir()` to work for containers namespaced to that uid/gid)
 	if config.RemappedRoot != "" {
-		id := idtools.CurrentIdentity()
-		// First make sure the current root dir has the correct perms.
-		if err := idtools.MkdirAllAndChown(config.Root, 0701, id); err != nil {
-			return errors.Wrapf(err, "could not create or set daemon root permissions: %s", config.Root)
-		}
-
 		config.Root = filepath.Join(rootDir, fmt.Sprintf("%d.%d", remappedRoot.UID, remappedRoot.GID))
 		logrus.Debugf("Creating user namespaced daemon root: %s", config.Root)
 		// Create the root directory if it doesn't exist
-		if err := idtools.MkdirAllAndChown(config.Root, 0701, id); err != nil {
+		if err := idtools.MkdirAllAndChown(config.Root, 0710, id); err != nil {
 			return fmt.Errorf("Cannot create daemon root: %s: %v", config.Root, err)
 		}
 		// we also need to verify that any pre-existing directories in the path to

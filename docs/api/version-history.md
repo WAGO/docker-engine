@@ -32,7 +32,7 @@ keywords: "API, Docker, rcli, REST, documentation"
 * The `filter` (singular) query parameter, which was deprecated in favor of the
   `filters` option in Docker 1.13, has now been removed from the `GET /images/json`
   endpoint. The parameter remains available when using API version 1.40 or below.
-* `GET /services` now returns `CappAdd` and `CapDrop` as part of the `ContainerSpec`.
+* `GET /services` now returns `CapAdd` and `CapDrop` as part of the `ContainerSpec`.
 * `GET /services/{id}` now returns `CapAdd` and `CapDrop` as part of the `ContainerSpec`.
 * `POST /services/create` now accepts `CapAdd` and `CapDrop` as part of the `ContainerSpec`.
 * `POST /services/{id}/update` now accepts `CapAdd` and `CapDrop` as part of the `ContainerSpec`.
@@ -45,6 +45,22 @@ keywords: "API, Docker, rcli, REST, documentation"
   to limit the maximum number of PIDs.
 * `GET /tasks` now  returns `Pids` in `TaskTemplate.Resources.Limits`.
 * `GET /tasks/{id}` now  returns `Pids` in `TaskTemplate.Resources.Limits`.
+* `POST /containers/create` now accepts a `platform` query parameter in the format
+  `os[/arch[/variant]]`.
+
+  When set, the daemon checks if the requested image is present in the local image
+  cache with the given OS and Architecture, and otherwise returns a `404` status.
+
+  If the option is _not_ set, the host's native OS and Architecture are used to
+  look up the image in the image cache. However, if no platform is passed and the
+  given image _does_ exist in the local image cache, but its OS or architecture
+  do not match, the container is created with the available image, and a warning
+  is added to the `Warnings` field in the response, for example;
+
+      WARNING: The requested image's platform (linux/arm64/v8) does not
+               match the detected host platform (linux/amd64) and no
+               specific platform was requested
+
 * `POST /containers/create` on Linux now accepts the `HostConfig.CgroupnsMode` property.
   Set the property to `host` to create the container in the daemon's cgroup namespace, or
   `private` to create the container in its own private cgroup namespace.  The per-daemon
@@ -240,6 +256,7 @@ keywords: "API, Docker, rcli, REST, documentation"
 
 [Docker Engine API v1.32](https://docs.docker.com/engine/api/v1.32/) documentation
 
+* `POST /images/create` now accepts a `platform` parameter in the form of `os[/arch[/variant]]`.
 * `POST /containers/create` now accepts additional values for the
   `HostConfig.IpcMode` property. New values are `private`, `shareable`,
   and `none`.
@@ -354,6 +371,10 @@ keywords: "API, Docker, rcli, REST, documentation"
 * `GET /version` now returns `MinAPIVersion`.
 * `POST /build` accepts `networkmode` parameter to specify network used during build.
 * `GET /images/(name)/json` now returns `OsVersion` if populated
+* `GET /images/(name)/json` no longer contains the `RootFS.BaseLayer` field. This
+  field was used for Windows images that used a base-image that was pre-installed
+  on the host (`RootFS.Type` `layers+base`), which is no longer supported, and
+  the `RootFS.BaseLayer` field has been removed.
 * `GET /info` now returns `Isolation`.
 * `POST /containers/create` now takes `AutoRemove` in HostConfig, to enable auto-removal of the container on daemon side when the container's process exits.
 * `GET /containers/json` and `GET /containers/(id or name)/json` now return `"removing"` as a value for the `State.Status` field if the container is being removed. Previously, "exited" was returned as status.
@@ -477,6 +498,8 @@ keywords: "API, Docker, rcli, REST, documentation"
 
 [Docker Engine API v1.22](v1.22.md) documentation
 
+* The `HostConfig.LxcConf` field has been removed, and is no longer available on
+  `POST /containers/create` and `GET /containers/(id)/json`.
 * `POST /container/(name)/update` updates the resources of a container.
 * `GET /containers/json` supports filter `isolation` on Windows.
 * `GET /containers/json` now returns the list of networks of containers.

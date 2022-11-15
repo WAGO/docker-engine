@@ -41,19 +41,22 @@ func TestBuildUserNamespaceValidateCapabilitiesAreV2(t *testing.T) {
 	dUserRemap.Start(t, "--userns-remap", "default")
 	ctx := context.Background()
 	clientUserRemap := dUserRemap.NewClientT(t)
+	defer clientUserRemap.Close()
 
-	err = load.FrozenImagesLinux(clientUserRemap, "debian:bullseye")
+	err = load.FrozenImagesLinux(clientUserRemap, "debian:bullseye-slim")
 	assert.NilError(t, err)
 
 	dUserRemapRunning := true
 	defer func() {
 		if dUserRemapRunning {
 			dUserRemap.Stop(t)
+			dUserRemap.Cleanup(t)
 		}
 	}()
 
 	dockerfile := `
-		FROM debian:bullseye
+		FROM debian:bullseye-slim
+		RUN apt-get update && apt-get install -y libcap2-bin --no-install-recommends
 		RUN setcap CAP_NET_BIND_SERVICE=+eip /bin/sleep
 	`
 
@@ -89,12 +92,17 @@ func TestBuildUserNamespaceValidateCapabilitiesAreV2(t *testing.T) {
 
 	dNoUserRemap := daemon.New(t)
 	dNoUserRemap.Start(t)
-	defer dNoUserRemap.Stop(t)
+	defer func() {
+		dNoUserRemap.Stop(t)
+		dNoUserRemap.Cleanup(t)
+	}()
 
 	clientNoUserRemap := dNoUserRemap.NewClientT(t)
+	defer clientNoUserRemap.Close()
 
 	tarFile, err := os.Open(tmp + "/image.tar")
 	assert.NilError(t, err, "failed to open image tar file")
+	defer tarFile.Close()
 
 	tarReader := bufio.NewReader(tarFile)
 	loadResp, err := clientNoUserRemap.ImageLoad(ctx, tarReader, false)
@@ -112,6 +120,7 @@ func TestBuildUserNamespaceValidateCapabilitiesAreV2(t *testing.T) {
 		ShowStdout: true,
 	})
 	assert.NilError(t, err)
+	defer logReader.Close()
 
 	actualStdout := new(bytes.Buffer)
 	actualStderr := ioutil.Discard

@@ -13,6 +13,7 @@ import (
 	"github.com/containerd/containerd/reference"
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/remotes/docker"
+	"github.com/moby/buildkit/util/contentutil"
 	"github.com/moby/buildkit/util/leaseutil"
 	"github.com/moby/buildkit/util/resolver/retryhandler"
 	digest "github.com/opencontainers/go-digest"
@@ -23,6 +24,7 @@ import (
 type ContentCache interface {
 	content.Ingester
 	content.Provider
+	content.Manager
 }
 
 var leasesMu sync.Mutex
@@ -74,10 +76,15 @@ func Config(ctx context.Context, str string, resolver remotes.Resolver, cache Co
 	if desc.Digest != "" {
 		ra, err := cache.ReaderAt(ctx, desc)
 		if err == nil {
-			desc.Size = ra.Size()
-			mt, err := DetectManifestMediaType(ra)
+			info, err := cache.Info(ctx, desc.Digest)
 			if err == nil {
-				desc.MediaType = mt
+				if ok, err := contentutil.HasSource(info, ref); err == nil && ok {
+					desc.Size = ra.Size()
+					mt, err := DetectManifestMediaType(ra)
+					if err == nil {
+						desc.MediaType = mt
+					}
+				}
 			}
 		}
 	}
@@ -100,8 +107,14 @@ func Config(ctx context.Context, str string, resolver remotes.Resolver, cache Co
 
 	children := childrenConfigHandler(cache, platform)
 
+	dslHandler, err := docker.AppendDistributionSourceLabel(cache, ref.String())
+	if err != nil {
+		return "", nil, err
+	}
+
 	handlers := []images.Handler{
 		retryhandler.New(remotes.FetchHandler(cache, fetcher), func(_ []byte) {}),
+		dslHandler,
 		children,
 	}
 	if err := images.Dispatch(ctx, images.Handlers(handlers...), nil, desc); err != nil {
@@ -183,19 +196,39 @@ func DetectManifestMediaType(ra content.ReaderAt) (string, error) {
 
 func DetectManifestBlobMediaType(dt []byte) (string, error) {
 	var mfst struct {
-		MediaType string          `json:"mediaType"`
+		MediaType *string         `json:"mediaType"`
 		Config    json.RawMessage `json:"config"`
+		Manifests json.RawMessage `json:"manifests"`
+		Layers    json.RawMessage `json:"layers"`
 	}
 
 	if err := json.Unmarshal(dt, &mfst); err != nil {
 		return "", err
 	}
 
-	if mfst.MediaType != "" {
-		return mfst.MediaType, nil
+	mt := images.MediaTypeDockerSchema2ManifestList
+
+	if mfst.Config != nil || mfst.Layers != nil {
+		mt = images.MediaTypeDockerSchema2Manifest
+
+		if mfst.Manifests != nil {
+			return "", errors.Errorf("invalid ambiguous manifest and manifest list")
+		}
 	}
-	if mfst.Config != nil {
-		return images.MediaTypeDockerSchema2Manifest, nil
+
+	if mfst.MediaType != nil {
+		switch *mfst.MediaType {
+		case images.MediaTypeDockerSchema2ManifestList, specs.MediaTypeImageIndex:
+			if mt != images.MediaTypeDockerSchema2ManifestList {
+				return "", errors.Errorf("mediaType in manifest does not match manifest contents")
+			}
+			mt = *mfst.MediaType
+		case images.MediaTypeDockerSchema2Manifest, specs.MediaTypeImageManifest:
+			if mt != images.MediaTypeDockerSchema2Manifest {
+				return "", errors.Errorf("mediaType in manifest does not match manifest contents")
+			}
+			mt = *mfst.MediaType
+		}
 	}
-	return images.MediaTypeDockerSchema2ManifestList, nil
+	return mt, nil
 }

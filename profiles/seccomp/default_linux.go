@@ -1,3 +1,4 @@
+//go:build seccomp
 // +build seccomp
 
 package seccomp // import "github.com/docker/docker/profiles/seccomp"
@@ -42,6 +43,7 @@ func arches() []Architecture {
 
 // DefaultProfile defines the allowed syscalls for the default seccomp profile.
 func DefaultProfile() *Seccomp {
+	nosys := uint(unix.ENOSYS)
 	syscalls := []*Syscall{
 		{
 			Names: []string{
@@ -119,6 +121,7 @@ func DefaultProfile() *Seccomp {
 				"ftruncate64",
 				"futex",
 				"futex_time64",
+				"futex_waitv",
 				"futimesat",
 				"getcpu",
 				"getcwd",
@@ -175,6 +178,9 @@ func DefaultProfile() *Seccomp {
 				"io_uring_setup",
 				"ipc",
 				"kill",
+				"landlock_add_rule",
+				"landlock_create_ruleset",
+				"landlock_restrict_self",
 				"lchown",
 				"lchown32",
 				"lgetxattr",
@@ -192,6 +198,7 @@ func DefaultProfile() *Seccomp {
 				"madvise",
 				"membarrier",
 				"memfd_create",
+				"memfd_secret",
 				"mincore",
 				"mkdir",
 				"mkdirat",
@@ -239,6 +246,7 @@ func DefaultProfile() *Seccomp {
 				"preadv",
 				"preadv2",
 				"prlimit64",
+				"process_mrelease",
 				"pselect6",
 				"pselect6_time64",
 				"pwrite64",
@@ -522,6 +530,7 @@ func DefaultProfile() *Seccomp {
 			Names: []string{
 				"bpf",
 				"clone",
+				"clone3",
 				"fanotify_init",
 				"fsconfig",
 				"fsmount",
@@ -529,11 +538,13 @@ func DefaultProfile() *Seccomp {
 				"fspick",
 				"lookup_dcookie",
 				"mount",
+				"mount_setattr",
 				"move_mount",
 				"name_to_handle_at",
 				"open_tree",
 				"perf_event_open",
 				"quotactl",
+				"quotactl_fd",
 				"setdomainname",
 				"sethostname",
 				"setns",
@@ -583,6 +594,17 @@ func DefaultProfile() *Seccomp {
 			Includes: Filter{
 				Arches: []string{"s390", "s390x"},
 			},
+			Excludes: Filter{
+				Caps: []string{"CAP_SYS_ADMIN"},
+			},
+		},
+		{
+			Names: []string{
+				"clone3",
+			},
+			Action:   specs.ActErrno,
+			ErrnoRet: &nosys,
+			Args:     []*specs.LinuxSeccompArg{},
 			Excludes: Filter{
 				Caps: []string{"CAP_SYS_ADMIN"},
 			},

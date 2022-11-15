@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/platforms"
@@ -375,7 +376,8 @@ func (p *v2Puller) pullV2Tag(ctx context.Context, ref reference.Named, platform 
 		Digest:    dgst,
 		Size:      size,
 	}
-	manifest, err := p.manifestStore.Get(ctx, desc)
+
+	manifest, err := p.manifestStore.Get(ctx, desc, ref)
 	if err != nil {
 		if isTagged && isNotFound(errors.Cause(err)) {
 			logrus.WithField("ref", ref).WithError(err).Debug("Falling back to pull manifest by tag")
@@ -617,11 +619,30 @@ func (p *v2Puller) pullSchema1(ctx context.Context, ref reference.Reference, unv
 	return imageID, manifestDigest, nil
 }
 
+func checkSupportedMediaType(mediaType string) error {
+	supportedMediaTypes := []string{
+		"application/vnd.oci.image.",
+		"application/vnd.docker.",
+	}
+
+	lowerMt := strings.ToLower(mediaType)
+	for _, mt := range supportedMediaTypes {
+		if strings.HasPrefix(lowerMt, mt) {
+			return nil
+		}
+	}
+	return unsupportedMediaTypeError{MediaType: mediaType}
+}
+
 func (p *v2Puller) pullSchema2Layers(ctx context.Context, target distribution.Descriptor, layers []distribution.Descriptor, platform *specs.Platform) (id digest.Digest, err error) {
 	if _, err := p.config.ImageStore.Get(ctx, target.Digest); err == nil {
 		// If the image already exists locally, no need to pull
 		// anything.
 		return target.Digest, nil
+	}
+
+	if err := checkSupportedMediaType(target.MediaType); err != nil {
+		return "", err
 	}
 
 	var descriptors []xfer.DownloadDescriptor
@@ -631,6 +652,9 @@ func (p *v2Puller) pullSchema2Layers(ctx context.Context, target distribution.De
 	for _, d := range layers {
 		if err := d.Digest.Validate(); err != nil {
 			return "", errors.Wrapf(err, "could not validate layer digest %q", d.Digest)
+		}
+		if err := checkSupportedMediaType(d.MediaType); err != nil {
+			return "", err
 		}
 		layerDescriptor := &v2LayerDescriptor{
 			digest:            d.Digest,
@@ -859,7 +883,7 @@ func (p *v2Puller) pullManifestList(ctx context.Context, ref reference.Named, mf
 		Size:      match.Size,
 		MediaType: match.MediaType,
 	}
-	manifest, err := p.manifestStore.Get(ctx, desc)
+	manifest, err := p.manifestStore.Get(ctx, desc, ref)
 	if err != nil {
 		return "", "", err
 	}
@@ -899,9 +923,17 @@ func (p *v2Puller) pullManifestList(ctx context.Context, ref reference.Named, mf
 	return id, manifestListDigest, err
 }
 
+const (
+	defaultSchemaPullBackoff     = 250 * time.Millisecond
+	defaultMaxSchemaPullAttempts = 5
+)
+
 func (p *v2Puller) pullSchema2Config(ctx context.Context, dgst digest.Digest) (configJSON []byte, err error) {
 	blobs := p.repo.Blobs(ctx)
-	configJSON, err = blobs.Get(ctx, dgst)
+	err = retry(ctx, defaultMaxSchemaPullAttempts, defaultSchemaPullBackoff, func(ctx context.Context) (err error) {
+		configJSON, err = blobs.Get(ctx, dgst)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -918,6 +950,32 @@ func (p *v2Puller) pullSchema2Config(ctx context.Context, dgst digest.Digest) (c
 	}
 
 	return configJSON, nil
+}
+
+func retry(ctx context.Context, maxAttempts int, sleep time.Duration, f func(ctx context.Context) error) (err error) {
+	attempt := 0
+	for ; attempt < maxAttempts; attempt++ {
+		err = retryOnError(f(ctx))
+		if err == nil {
+			return nil
+		}
+		if xfer.IsDoNotRetryError(err) {
+			break
+		}
+
+		if attempt+1 < maxAttempts {
+			timer := time.NewTimer(sleep)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+				logrus.WithError(err).WithField("attempts", attempt+1).Debug("retrying after error")
+				sleep *= 2
+			}
+		}
+	}
+	return errors.Wrapf(err, "download failed after attempts=%d", attempt+1)
 }
 
 // schema2ManifestDigest computes the manifest digest, and, if pulling by

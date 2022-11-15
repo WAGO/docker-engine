@@ -1,3 +1,4 @@
+//go:build !windows
 // +build !windows
 
 package daemon // import "github.com/docker/docker/daemon"
@@ -95,6 +96,8 @@ func TestBackportMountSpec(t *testing.T) {
 		}
 		return string(b)
 	}
+
+	mpc := *c.MountPoints["/jambolan"]
 
 	for _, x := range []expected{
 		{
@@ -225,7 +228,7 @@ func TestBackportMountSpec(t *testing.T) {
 			comment: "partially configured named volume caused by #32613",
 		},
 		{
-			mp:      &(*c.MountPoints["/jambolan"]), // copy the mountpoint, expect no changes
+			mp:      &mpc,
 			comment: "volume defined in mounts API",
 		},
 		{

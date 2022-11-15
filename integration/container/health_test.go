@@ -2,6 +2,7 @@ package container // import "github.com/docker/docker/integration/container"
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -43,8 +44,32 @@ func TestHealthKillContainer(t *testing.T) {
 	client := testEnv.APIClient()
 
 	id := container.Run(ctx, t, client, func(c *container.TestContainerConfig) {
+		cmd := `
+# Set the initial HEALTH value so the healthcheck passes
+HEALTH="1"
+echo $HEALTH > /health
+
+# Any time doHealth is run we flip the value
+# This lets us use kill signals to determine when healtchecks have run.
+doHealth() {
+	case "$HEALTH" in
+		"0")
+			HEALTH="1"
+			;;
+		"1")
+			HEALTH="0"
+			;;
+	esac
+	echo $HEALTH > /health
+}
+
+trap 'doHealth' USR1
+
+while true; do sleep 1; done
+`
+		c.Config.Cmd = []string{"/bin/sh", "-c", cmd}
 		c.Config.Healthcheck = &containertypes.HealthConfig{
-			Test:     []string{"CMD-SHELL", "sleep 1"},
+			Test:     []string{"CMD-SHELL", `[ "$(cat /health)" = "1" ]`},
 			Interval: time.Second,
 			Retries:  5,
 		}
@@ -59,7 +84,50 @@ func TestHealthKillContainer(t *testing.T) {
 
 	ctxPoll, cancel = context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	poll.WaitOn(t, pollForHealthStatus(ctxPoll, client, id, "unhealthy"), poll.WithDelay(100*time.Millisecond))
+
+	err = client.ContainerKill(ctx, id, "SIGUSR1")
+	assert.NilError(t, err)
+
+	ctxPoll, cancel = context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	poll.WaitOn(t, pollForHealthStatus(ctxPoll, client, id, "healthy"), poll.WithDelay(100*time.Millisecond))
+}
+
+// TestHealthCheckProcessKilled verifies that health-checks exec get killed on time-out.
+func TestHealthCheckProcessKilled(t *testing.T) {
+	// FIXME: Broken on Windows + containerd combination
+	defer setupTest(t)()
+	ctx := context.Background()
+	apiClient := testEnv.APIClient()
+
+	cID := container.Run(ctx, t, apiClient, func(c *container.TestContainerConfig) {
+		c.Config.Healthcheck = &containertypes.HealthConfig{
+			Test:     []string{"CMD", "sh", "-c", "sleep 60"},
+			Interval: 100 * time.Millisecond,
+			Timeout:  50 * time.Millisecond,
+			Retries:  1,
+		}
+	})
+	poll.WaitOn(t, pollForHealthCheckLog(ctx, apiClient, cID, "Health check exceeded timeout (50ms)"))
+}
+
+func pollForHealthCheckLog(ctx context.Context, client client.APIClient, containerID string, expected string) func(log poll.LogT) poll.Result {
+	return func(log poll.LogT) poll.Result {
+		inspect, err := client.ContainerInspect(ctx, containerID)
+		if err != nil {
+			return poll.Error(err)
+		}
+		healthChecksTotal := len(inspect.State.Health.Log)
+		if healthChecksTotal > 0 {
+			output := inspect.State.Health.Log[healthChecksTotal-1].Output
+			if output == expected {
+				return poll.Success()
+			}
+			return poll.Error(fmt.Errorf("expected %q, got %q", expected, output))
+		}
+		return poll.Continue("waiting for container healthcheck logs")
+	}
 }
 
 func pollForHealthStatus(ctx context.Context, client client.APIClient, containerID string, healthStatus string) func(log poll.LogT) poll.Result {
