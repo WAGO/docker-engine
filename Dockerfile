@@ -15,7 +15,9 @@ FROM ${GOLANG_IMAGE} AS base
 RUN echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
 ARG APT_MIRROR
 RUN sed -ri "s/(httpredir|deb).debian.org/${APT_MIRROR:-deb.debian.org}/g" /etc/apt/sources.list \
- && sed -ri "s/(security).debian.org/${APT_MIRROR:-security.debian.org}/g" /etc/apt/sources.list
+ && sed -ri "s/(security).debian.org/${APT_MIRROR:-security.debian.org}/g" /etc/apt/sources.list \
+ && printf "deb http://ftp.debian.org/debian stretch-backports main contrib non-free\ndeb-src http://ftp.debian.org/debian stretch-backports main contrib non-free" \
+    > /etc/apt/sources.list.d/backports.list
 ENV GO111MODULE=off
 
 FROM base AS criu
